@@ -8,6 +8,7 @@ use crate::{IgbError, IgbResult};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::{collections::VecDeque, vec::Vec};
+use bit_field::BitField;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::time::Duration;
@@ -529,6 +530,72 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct IgbStatus {
+    pub full_duplex: bool,
+    pub link_up: bool,
+    pub speed: Speed,
+    pub phy_reset_asserted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Speed {
+    Mb10,
+    Mb100,
+    Mb1000,
+}
+
+// igb related helper method
+impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
+    fn igb_general_configure(&self) {
+        self.set_reg32(IGB_RXPBS, 64);
+        self.set_reg32(IGB_TXPBS, 40);
+        self.set_reg32(IGB_SWPBS, 20);
+    }
+
+    fn igb_init_link(&self) {
+        self.set_reg32(IGB_MDIC, (1 << 21) | IGB_MDIC_READ);
+        self.wait_set_reg32(IGB_MDIC, IGB_MDIC_READY);
+        let mut mii = self.get_reg32(IGB_MDIC) & IGB_MDIC_DATA;
+
+        log::info!("{mii:b}");
+
+        mii |= IGB_MII_CR_RESTART_AUTO_NEGOTIATION;
+
+        self.set_reg32(IGB_MDIC, mii | (1 << 21) | IGB_MDIC_WRITE);
+        self.wait_set_reg32(IGB_MDIC, IGB_MDIC_READY);
+    }
+
+    fn igb_status(&self) -> IgbStatus {
+        let raw = self.get_reg32(IGB_STATUS);
+        let speed_raw = (raw >> 6) & 0b11;
+
+        IgbStatus {
+            link_up: raw.get_bit(1),
+            speed: match speed_raw {
+                0 => Speed::Mb10,
+                1 => Speed::Mb100,
+                0b10 => Speed::Mb1000,
+                _ => Speed::Mb1000,
+            },
+            full_duplex: raw.get_bit(0),
+            phy_reset_asserted: raw.get_bit(10),
+        }
+    }
+
+    fn igb_reset_stats(&self) {
+        // CRC Error Count - CRCERRS (0x04000; RC)
+        const IGB_STAT_REG_FIRST: u32 = 0x04000;
+        // Switch Drop Packet Count - SDPC (0x41A4; RC)
+        const IGB_STAT_REG_LAST: u32 = 0x041A4;
+
+        log::debug!("Initialization of Statistics");
+        for reg in (IGB_STAT_REG_FIRST..=IGB_STAT_REG_LAST).step_by(4) {
+            self.get_reg32(reg);
+        }
+    }
+}
+
 // Private methods implementation
 impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Resets and initializes the device.
@@ -552,27 +619,33 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
         );
 
+        self.igb_general_configure();
+
         // section 4.6.3 - wait for EEPROM auto read completion
-        self.wait_set_reg32(IXGBE_EEC, IXGBE_EEC_ARD);
+        // self.wait_set_reg32(IXGBE_EEC, IXGBE_EEC_ARD);
 
         // section 4.6.3 - wait for dma initialization done
-        self.wait_set_reg32(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE);
+        // self.wait_set_reg32(IXGBE_RDRXCTL, IXGBE_RDRXCTL_DMAIDONE);
 
         // skip last step from 4.6.3 - we don't want interrupts(ixy)
         // section 4.6.3 Enable interrupts.
 
         // section 4.6.4 - initialize link (auto negotiation)
-        self.init_link();
+        self.igb_init_link();
+
+        log::info!("status: {:?}", self.igb_status());
 
         // section 4.6.5 - statistical counters
         // reset-on-read registers, just read them once
-        self.reset_stats();
+        self.igb_reset_stats();
 
         // section 4.6.7 - init rx
         self.init_rx(pool)?;
 
         // section 4.6.8 - init tx
         self.init_tx()?;
+
+        log::info!("init rx:{} tx:{}", self.num_rx_queues, self.num_tx_queues);
 
         for i in 0..self.num_rx_queues {
             self.start_rx_queue(i)?;
@@ -583,7 +656,7 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         }
 
         // enable promisc mode by default to make testing easier
-        self.set_promisc(true);
+        // self.set_promisc(true);
 
         // wait some time for the link to come up
         self.wait_for_link();
