@@ -20,3 +20,15 @@ pub const IGB_MDIC_READ: u32 = 0x0800_0000;
 pub const IGB_MDIC_READY: u32 = 1 << 28;
 
 pub const IGB_MII_CR_RESTART_AUTO_NEGOTIATION: u32 = 1 << 9;
+
+pub const IGB_RCTL: u32 = 0x00100;
+pub const IGB_RCTL_ENABLE: u32 = 1 << 1;
+
+pub const IGB_RXDCTL: u32 = 0x0C028;
+pub const IGB_RXDCTL_ENABLE: u32 = 1 << 25;
+
+pub const IGB_TCTL: u32 = 0x00400;
+pub const IGB_TCTL_ENABLE: u32 = 1 << 1;
+
+pub const IGB_TXDCTL: u32 = 0x0E028;
+pub const IGB_TXDCTL_ENABLE: u32 = 1 << 25;

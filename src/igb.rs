@@ -594,6 +594,64 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
             self.get_reg32(reg);
         }
     }
+
+    fn igb_init_rx(&mut self, pool: &Arc<MemPool>) -> IgbResult {
+        const RDBAL: u32 = 0x0C000;
+        const RDBAH: u32 = 0x0C004;
+        const RDLEN: u32 = 0x0C008;
+        const RDH: u32 = 0x0C010;
+        const RDT: u32 = 0x0C018;
+
+        self.clear_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
+
+        let ring_size_bytes = QS * mem::size_of::<AdvancedRxDescriptor>();
+        let dma: Dma<AdvancedRxDescriptor, H> = Dma::allocate(ring_size_bytes, true)?;
+
+        // initialize to 0xff to prevent rogue memory accesses on premature dma activation
+        let mut descriptors: [NonNull<AdvancedRxDescriptor>; QS] = [NonNull::dangling(); QS];
+
+        unsafe {
+            for desc_id in 0..QS {
+                descriptors[desc_id] = NonNull::new(dma.virt.add(desc_id)).unwrap();
+                descriptors[desc_id].as_mut().init();
+            }
+        }
+
+        info!("rx ring phys addr: {:#018x}", dma.phys);
+        info!("rx ring virt addr: {:p}", dma.virt);
+
+        let bus_addr = dma.phys as u64;
+        let len = ring_size_bytes as u32;
+
+        self.set_reg32(RDBAL, bus_addr as u32);
+        self.set_reg32(RDBAH, (bus_addr >> 32) as u32);
+        self.set_reg32(RDLEN, len);
+        self.set_reg32(RDH, 0);
+        self.set_reg32(RDT, 0);
+
+        let rx_queue = IxgbeRxQueue {
+            descriptors: Box::new(descriptors),
+            pool: Arc::clone(pool),
+            num_descriptors: QS,
+            rx_index: 0,
+            bufs_in_use: Vec::with_capacity(QS),
+        };
+
+        self.rx_queues.push(rx_queue);
+
+        self.wait_set_reg32(IGB_RXDCTL, IGB_RXDCTL_ENABLE);
+
+        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
+
+        Ok(())
+    }
+
+    fn igb_wait_for_link(&self) {
+        while !self.igb_status().link_up {
+            let _ = H::wait_until(Duration::from_millis(10));
+        }
+        log::info!("link up status: {:?}", self.igb_status());
+    }
 }
 
 // Private methods implementation
@@ -633,14 +691,12 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         // section 4.6.4 - initialize link (auto negotiation)
         self.igb_init_link();
 
-        log::info!("status: {:?}", self.igb_status());
-
         // section 4.6.5 - statistical counters
         // reset-on-read registers, just read them once
         self.igb_reset_stats();
 
         // section 4.6.7 - init rx
-        self.init_rx(pool)?;
+        self.igb_init_rx(pool)?;
 
         // section 4.6.8 - init tx
         self.init_tx()?;
@@ -659,7 +715,7 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         // self.set_promisc(true);
 
         // wait some time for the link to come up
-        self.wait_for_link();
+        self.igb_wait_for_link();
 
         info!("Success to initialize and reset Intel 10G NIC regs.");
 
