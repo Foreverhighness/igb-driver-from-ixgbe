@@ -639,7 +639,7 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
 
         self.set_reg32(IGB_SRRCTL, 0);
 
-        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE | IGB_RCTL_SZ_1024);
+        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE | IGB_RCTL_SZ_1024 | IGB_RCTL_BAM);
 
         Ok(())
     }
