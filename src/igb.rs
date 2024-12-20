@@ -15,7 +15,7 @@ use core::time::Duration;
 use core::{mem, ptr};
 use smoltcp::wire::{EthernetFrame, PrettyPrinter};
 
-const DRIVER_NAME: &str = "ixgbe";
+const DRIVER_NAME: &str = "igb";
 
 const MAX_QUEUES: u16 = 64;
 
@@ -360,10 +360,7 @@ impl<H: IgbHal, const QS: usize> NicDevice<H> for IgbDevice<H, QS> {
         queue.bufs_in_use.push_back(packet.pool_entry);
         mem::forget(packet);
 
-        self.set_reg32(
-            IXGBE_TDT(u32::from(queue_id)),
-            self.tx_queues[queue_id as usize].tx_index as u32,
-        );
+        self.set_reg32(IGB_TDT, self.tx_queues[queue_id as usize].tx_index as u32);
 
         debug!("[Ixgbe::send] SEND PACKET COMPLETE");
         Ok(())
@@ -711,8 +708,9 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
             // we need to remember which descriptor entry belongs to which mempool entry
             queue.bufs_in_use.push(id);
         }
+        debug!("allocate {} rx descriptors.", queue.num_descriptors);
 
-        let queue = &self.rx_queues[0];
+        let tail = (queue.num_descriptors - 1) as u32;
 
         // enable queue and wait if necessary
         self.set_flags32(IGB_RXDCTL, IGB_RXDCTL_ENABLE);
@@ -722,7 +720,7 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         self.set_reg32(IGB_RDH, 0);
 
         // was set to 0 before in the init function
-        self.set_reg32(IGB_RDT, (queue.num_descriptors - 1) as u32);
+        self.set_reg32(IGB_RDT, tail);
 
         Ok(())
     }
@@ -745,6 +743,13 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         self.wait_set_reg32(IGB_TXDCTL, IGB_TXDCTL_ENABLE);
 
         Ok(())
+    }
+
+    fn igb_enable_interrupts(&self) {
+        self.set_reg32(
+            IGB_IMS,
+            IGB_IMS_RXDW | IGB_IMS_TXDW | IGB_IMS_RXDMT0 | IGB_IMS_LSC | IGB_IMS_RXSEQ,
+        );
     }
 
     fn igb_wait_for_link(&self) {
@@ -811,10 +816,14 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         // enable promisc mode by default to make testing easier
         // self.set_promisc(true);
 
+        self.igb_enable_interrupts();
+
         // wait some time for the link to come up
         self.igb_wait_for_link();
 
         info!("Success to initialize and reset Intel 10G NIC regs.");
+
+        let _ = H::wait_until(Duration::from_secs(1));
 
         Ok(())
     }

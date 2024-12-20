@@ -26,6 +26,11 @@ pub const IGB_RCTL_ENABLE: u32 = 1 << 1;
 
 pub const IGB_RXDCTL: u32 = 0x0C028;
 pub const IGB_RXDCTL_ENABLE: u32 = 1 << 25;
+pub const IGB_RXDCTL_PTHRESH: u32 = 16;
+pub const IGB_RXDCTL_HTHRESH: u32 = 8 << 8;
+pub const IGB_RXDCTL_WTHRESH: u32 = 1 << 16;
+
+pub const IGB_SRRCTL: u32 = 0x0C00C;
 
 pub const IGB_TCTL: u32 = 0x00400;
 pub const IGB_TCTL_ENABLE: u32 = 1 << 1;
@@ -45,3 +50,10 @@ pub const IGB_TDBAH: u32 = 0x0E004;
 pub const IGB_TDLEN: u32 = 0x0E008;
 pub const IGB_TDH: u32 = 0x0E010;
 pub const IGB_TDT: u32 = 0x0E018;
+
+pub const IGB_IMS: u32 = 0x1508;
+pub const IGB_IMS_RXDW: u32 = 1 << 7;
+pub const IGB_IMS_TXDW: u32 = 1;
+pub const IGB_IMS_RXDMT0: u32 = 1 << 4;
+pub const IGB_IMS_LSC: u32 = 1 << 2;
+pub const IGB_IMS_RXSEQ: u32 = 1 << 3;
