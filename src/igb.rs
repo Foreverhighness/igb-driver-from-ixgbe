@@ -2,8 +2,8 @@ use crate::descriptor::{AdvancedRxDescriptor, AdvancedTxDescriptor, RX_STATUS_DD
 use crate::interrupts::Interrupts;
 use crate::memory::{alloc_pkt, Dma, MemPool, Packet, PACKET_HEADROOM};
 use crate::NicDevice;
-use crate::{constants::*, hal::IxgbeHal};
-use crate::{IxgbeError, IxgbeResult};
+use crate::{constants::*, hal::IgbHal};
+use crate::{IgbError, IgbResult};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::{collections::VecDeque, vec::Vec};
@@ -28,8 +28,8 @@ fn wrap_ring(index: usize, ring_size: usize) -> usize {
     (index + 1) & (ring_size - 1)
 }
 
-/// Ixgbe device.
-pub struct IxgbeDevice<H: IxgbeHal, const QS: usize> {
+/// Igb device.
+pub struct IgbDevice<H: IgbHal, const QS: usize> {
     addr: *mut u8,
     len: usize,
     num_rx_queues: u16,
@@ -75,17 +75,17 @@ impl IxgbeTxQueue {
 }
 
 /// A packet buffer for ixgbe.
-pub struct IxgbeNetBuf {
+pub struct IgbNetBuf {
     packet: Packet,
 }
 
-impl IxgbeNetBuf {
+impl IgbNetBuf {
     /// Allocate a packet based on [`MemPool`].
-    pub fn alloc(pool: &Arc<MemPool>, size: usize) -> IxgbeResult<Self> {
+    pub fn alloc(pool: &Arc<MemPool>, size: usize) -> IgbResult<Self> {
         if let Some(pkt) = alloc_pkt(pool, size) {
             Ok(Self { packet: pkt })
         } else {
-            Err(IxgbeError::NoMemory)
+            Err(IgbError::NoMemory)
         }
     }
 
@@ -110,7 +110,7 @@ impl IxgbeNetBuf {
     }
 
     /// Construct a [`IxgbeNetBuf`] from specified pool entry and pool.
-    pub fn construct(pool_entry: usize, pool: &Arc<MemPool>, len: usize) -> IxgbeResult<Self> {
+    pub fn construct(pool_entry: usize, pool: &Arc<MemPool>, len: usize) -> IgbResult<Self> {
         let pkt = unsafe {
             Packet::new(
                 pool.get_virt_addr(pool_entry).add(PACKET_HEADROOM),
@@ -124,7 +124,7 @@ impl IxgbeNetBuf {
     }
 }
 
-impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
+impl<H: IgbHal, const QS: usize> NicDevice<H> for IgbDevice<H, QS> {
     fn get_driver_name(&self) -> &str {
         DRIVER_NAME
     }
@@ -168,11 +168,11 @@ impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
         self.get_reg32(IXGBE_GOTCH);
     }
 
-    fn recycle_tx_buffers(&mut self, queue_id: u16) -> IxgbeResult {
+    fn recycle_tx_buffers(&mut self, queue_id: u16) -> IgbResult {
         let queue = self
             .tx_queues
             .get_mut(queue_id as usize)
-            .ok_or(IxgbeError::InvalidQueue)?;
+            .ok_or(IgbError::InvalidQueue)?;
 
         let mut clean_index = queue.clean_index;
         let cur_index = queue.tx_index;
@@ -228,19 +228,19 @@ impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
         queue_id: u16,
         packet_nums: usize,
         mut f: F,
-    ) -> IxgbeResult<usize>
+    ) -> IgbResult<usize>
     where
-        F: FnMut(IxgbeNetBuf),
+        F: FnMut(IgbNetBuf),
     {
         let mut recv_nums = 0;
         let queue = self
             .rx_queues
             .get_mut(queue_id as usize)
-            .ok_or(IxgbeError::InvalidQueue)?;
+            .ok_or(IgbError::InvalidQueue)?;
 
         // Can't receive, return [`IxgbeError::NotReady`]
         if !queue.can_recv() {
-            return Err(IxgbeError::NotReady);
+            return Err(IgbError::NotReady);
         }
 
         let mut rx_index = queue.rx_index;
@@ -276,7 +276,7 @@ impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
                 #[cfg(target_arch = "x86_64")]
                 packet.prefrtch(crate::memory::Prefetch::Time0);
 
-                let rx_buf = IxgbeNetBuf { packet };
+                let rx_buf = IgbNetBuf { packet };
 
                 // Call closure to avoid too many dynamic memory allocations, handle
                 // by caller.
@@ -304,15 +304,15 @@ impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
 
     /// Sends a [`TxBuffer`] to the network. If currently queue is full, returns an
     /// error with type [`IxgbeError::QueueFull`].
-    fn send(&mut self, queue_id: u16, tx_buf: IxgbeNetBuf) -> IxgbeResult {
+    fn send(&mut self, queue_id: u16, tx_buf: IgbNetBuf) -> IgbResult {
         let queue = self
             .tx_queues
             .get_mut(queue_id as usize)
-            .ok_or(IxgbeError::InvalidQueue)?;
+            .ok_or(IgbError::InvalidQueue)?;
 
         if !queue.can_send() {
             warn!("Queue {} is full", queue_id);
-            return Err(IxgbeError::QueueFull);
+            return Err(IgbError::QueueFull);
         }
 
         let cur_index = queue.tx_index;
@@ -368,25 +368,25 @@ impl<H: IxgbeHal, const QS: usize> NicDevice<H> for IxgbeDevice<H, QS> {
     }
 
     /// Whether can receiver packet.
-    fn can_receive(&self, queue_id: u16) -> IxgbeResult<bool> {
+    fn can_receive(&self, queue_id: u16) -> IgbResult<bool> {
         let queue = self
             .rx_queues
             .get(queue_id as usize)
-            .ok_or(IxgbeError::InvalidQueue)?;
+            .ok_or(IgbError::InvalidQueue)?;
         Ok(queue.can_recv())
     }
 
     /// Whether can send packet.
-    fn can_send(&self, queue_id: u16) -> IxgbeResult<bool> {
+    fn can_send(&self, queue_id: u16) -> IgbResult<bool> {
         let queue = self
             .tx_queues
             .get(queue_id as usize)
-            .ok_or(IxgbeError::InvalidQueue)?;
+            .ok_or(IgbError::InvalidQueue)?;
         Ok(queue.can_send())
     }
 }
 
-impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
+impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Returns an initialized `IxgbeDevice` on success.
     ///
     /// # Panics
@@ -397,23 +397,24 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
         num_rx_queues: u16,
         num_tx_queues: u16,
         pool: &Arc<MemPool>,
-    ) -> IxgbeResult<Self> {
+    ) -> IgbResult<Self> {
         info!(
-            "Initializing ixgbe device@base: {:#x}, len: {:#x}, num_rx_queues: {}, num_tx_queues: {}",
+            "Initializing igb device@base: {:#x}, len: {:#x}, num_rx_queues: {}, num_tx_queues: {}",
             base, len, num_rx_queues, num_tx_queues
         );
         // initialize RX and TX queue
         let rx_queues = Vec::with_capacity(num_rx_queues as usize);
         let tx_queues = Vec::with_capacity(num_tx_queues as usize);
 
-        let mut interrupts = Interrupts::default();
+        let interrupts = Interrupts::default();
         #[cfg(feature = "irq")]
         {
+            let mut interrupts = interrupts;
             interrupts.interrupts_enabled = true;
             interrupts.itr_rate = 0x028;
         }
 
-        let mut dev = IxgbeDevice {
+        let mut dev = IgbDevice {
             addr: base as *mut u8,
             len,
             num_rx_queues,
@@ -528,9 +529,9 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
 }
 
 // Private methods implementation
-impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
+impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Resets and initializes the device.
-    fn reset_and_init(&mut self, pool: &Arc<MemPool>) -> IxgbeResult {
+    fn reset_and_init(&mut self, pool: &Arc<MemPool>) -> IgbResult {
         info!("resetting device ixgbe device");
         // section 4.6.3.1 - disable all interrupts
         self.disable_interrupts();
@@ -594,7 +595,7 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
     // sections 4.6.7
     /// Initializes the rx queues of this device.
     #[allow(clippy::needless_range_loop)]
-    fn init_rx(&mut self, pool: &Arc<MemPool>) -> IxgbeResult {
+    fn init_rx(&mut self, pool: &Arc<MemPool>) -> IgbResult {
         // disable rx while re-configuring it
         self.clear_flags32(IXGBE_RXCTRL, IXGBE_RXCTRL_RXEN);
 
@@ -680,7 +681,7 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
     // section 4.6.8
     /// Initializes the tx queues of this device.
     #[allow(clippy::needless_range_loop)]
-    fn init_tx(&mut self) -> IxgbeResult {
+    fn init_tx(&mut self) -> IgbResult {
         // crc offload and small packet padding
         self.set_flags32(IXGBE_HLREG0, IXGBE_HLREG0_TXCRCEN | IXGBE_HLREG0_TXPADEN);
 
@@ -752,14 +753,14 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
     }
 
     /// Sets the rx queues` descriptors and enables the queues.
-    fn start_rx_queue(&mut self, queue_id: u16) -> IxgbeResult {
+    fn start_rx_queue(&mut self, queue_id: u16) -> IgbResult {
         debug!("starting rx queue {}", queue_id);
 
         let queue = &mut self.rx_queues[queue_id as usize];
 
         if queue.num_descriptors & (queue.num_descriptors - 1) != 0 {
             // return Err("number of queue entries must be a power of 2".into());
-            return Err(IxgbeError::QueueNotAligned);
+            return Err(IgbError::QueueNotAligned);
         }
 
         for i in 0..queue.num_descriptors {
@@ -767,7 +768,7 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
 
             let id = match pool.alloc_buf() {
                 Some(x) => x,
-                None => return Err(IxgbeError::NoMemory),
+                None => return Err(IgbError::NoMemory),
             };
 
             unsafe {
@@ -799,13 +800,13 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
     }
 
     /// Enables the tx queues.
-    fn start_tx_queue(&mut self, queue_id: u16) -> IxgbeResult {
+    fn start_tx_queue(&mut self, queue_id: u16) -> IgbResult {
         debug!("starting tx queue {}", queue_id);
 
         let queue = &mut self.tx_queues[queue_id as usize];
 
         if queue.num_descriptors & (queue.num_descriptors - 1) != 0 {
-            return Err(IxgbeError::QueueNotAligned);
+            return Err(IgbError::QueueNotAligned);
         }
 
         // tx queue starts out empty
@@ -965,5 +966,5 @@ impl<H: IxgbeHal, const QS: usize> IxgbeDevice<H, QS> {
     }
 }
 
-unsafe impl<H: IxgbeHal, const QS: usize> Sync for IxgbeDevice<H, QS> {}
-unsafe impl<H: IxgbeHal, const QS: usize> Send for IxgbeDevice<H, QS> {}
+unsafe impl<H: IgbHal, const QS: usize> Sync for IgbDevice<H, QS> {}
+unsafe impl<H: IgbHal, const QS: usize> Send for IgbDevice<H, QS> {}
