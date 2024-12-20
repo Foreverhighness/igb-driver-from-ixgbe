@@ -10,6 +10,7 @@ mod constants;
 mod descriptor;
 mod hal;
 mod igb;
+mod igb_constants;
 mod interrupts;
 mod memory;
 

@@ -1,4 +1,5 @@
 use crate::descriptor::{AdvancedRxDescriptor, AdvancedTxDescriptor, RX_STATUS_DD, RX_STATUS_EOP};
+use crate::igb_constants::*;
 use crate::interrupts::Interrupts;
 use crate::memory::{alloc_pkt, Dma, MemPool, Packet, PACKET_HEADROOM};
 use crate::NicDevice;
@@ -840,16 +841,16 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Disable all interrupts for all queues.
     fn disable_interrupts(&self) {
         // Clear interrupt mask to stop from interrupts being generated
-        self.set_reg32(IXGBE_EIMS, 0x0000_0000);
+        self.set_reg32(IGB_EIMS, 0x0000_0000);
         self.clear_interrupts();
     }
 
     /// Disable interrupt for queue with `queue_id`.
     fn disable_interrupt(&self, queue_id: u16) {
         // Clear interrupt mask to stop from interrupts being generated
-        let mut mask: u32 = self.get_reg32(IXGBE_EIMS);
+        let mut mask: u32 = self.get_reg32(IGB_EIMS);
         mask &= !(1 << queue_id);
-        self.set_reg32(IXGBE_EIMS, mask);
+        self.set_reg32(IGB_EIMS, mask);
         self.clear_interrupt(queue_id);
         debug!("Using polling");
     }
@@ -857,15 +858,15 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Clear interrupt for queue with `queue_id`.
     fn clear_interrupt(&self, queue_id: u16) {
         // Clear interrupt mask
-        self.set_reg32(IXGBE_EIMC, 1 << queue_id);
-        self.get_reg32(IXGBE_EICR);
+        self.set_reg32(IGB_EIMC, 1 << queue_id);
+        self.get_reg32(IGB_EICR);
     }
 
     /// Clear all interrupt masks for all queues.
     fn clear_interrupts(&self) {
         // Clear interrupt mask
-        self.set_reg32(IXGBE_EIMC, IXGBE_IRQ_CLEAR_MASK);
-        self.get_reg32(IXGBE_EICR);
+        self.set_reg32(IGB_EIMC, IXGBE_IRQ_CLEAR_MASK);
+        self.get_reg32(IGB_EICR);
     }
 
     /// Waits for the link to come up.
