@@ -32,3 +32,16 @@ pub const IGB_TCTL_ENABLE: u32 = 1 << 1;
 
 pub const IGB_TXDCTL: u32 = 0x0E028;
 pub const IGB_TXDCTL_ENABLE: u32 = 1 << 25;
+pub const IGB_TXDCTL_WTHRESH: u32 = 1 << 16;
+
+pub const IGB_RDBAL: u32 = 0x0C000;
+pub const IGB_RDBAH: u32 = 0x0C004;
+pub const IGB_RDLEN: u32 = 0x0C008;
+pub const IGB_RDH: u32 = 0x0C010;
+pub const IGB_RDT: u32 = 0x0C018;
+
+pub const IGB_TDBAL: u32 = 0x0E000;
+pub const IGB_TDBAH: u32 = 0x0E004;
+pub const IGB_TDLEN: u32 = 0x0E008;
+pub const IGB_TDH: u32 = 0x0E010;
+pub const IGB_TDT: u32 = 0x0E018;

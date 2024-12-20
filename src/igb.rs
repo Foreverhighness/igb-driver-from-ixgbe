@@ -596,12 +596,6 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     }
 
     fn igb_init_rx(&mut self, pool: &Arc<MemPool>) -> IgbResult {
-        const RDBAL: u32 = 0x0C000;
-        const RDBAH: u32 = 0x0C004;
-        const RDLEN: u32 = 0x0C008;
-        const RDH: u32 = 0x0C010;
-        const RDT: u32 = 0x0C018;
-
         self.clear_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
 
         let ring_size_bytes = QS * mem::size_of::<AdvancedRxDescriptor>();
@@ -623,11 +617,11 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         let bus_addr = dma.phys as u64;
         let len = ring_size_bytes as u32;
 
-        self.set_reg32(RDBAL, bus_addr as u32);
-        self.set_reg32(RDBAH, (bus_addr >> 32) as u32);
-        self.set_reg32(RDLEN, len);
-        self.set_reg32(RDH, 0);
-        self.set_reg32(RDT, 0);
+        self.set_reg32(IGB_RDBAL, bus_addr as u32);
+        self.set_reg32(IGB_RDBAH, (bus_addr >> 32) as u32);
+        self.set_reg32(IGB_RDLEN, len);
+        self.set_reg32(IGB_RDH, 0);
+        self.set_reg32(IGB_RDT, 0);
 
         let rx_queue = IxgbeRxQueue {
             descriptors: Box::new(descriptors),
@@ -639,9 +633,116 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
 
         self.rx_queues.push(rx_queue);
 
+        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
+
+        Ok(())
+    }
+
+    fn igb_init_tx(&mut self) -> IgbResult {
+        self.clear_flags32(IGB_TCTL, IGB_TCTL_ENABLE);
+
+        let ring_size_bytes = QS * mem::size_of::<AdvancedTxDescriptor>();
+
+        let dma: Dma<AdvancedTxDescriptor, H> = Dma::allocate(ring_size_bytes, true)?;
+
+        let mut descriptors: [NonNull<AdvancedTxDescriptor>; QS] = [NonNull::dangling(); QS];
+
+        unsafe {
+            for desc_id in 0..QS {
+                descriptors[desc_id] = NonNull::new(dma.virt.add(desc_id)).unwrap();
+                descriptors[desc_id].as_mut().init();
+            }
+        }
+
+        info!("tx ring phys addr: {:#018x}", dma.phys);
+        info!("tx ring virt addr: {:p}", dma.virt);
+
+        let bus_addr = dma.phys as u64;
+        let len = ring_size_bytes as u32;
+
+        self.set_reg32(IGB_TDBAL, bus_addr as u32);
+        self.set_reg32(IGB_TDBAH, (bus_addr >> 32) as u32);
+        self.set_reg32(IGB_TDLEN, len);
+        self.set_reg32(IGB_TDH, 0);
+        self.set_reg32(IGB_TDT, 0);
+
+        let tx_queue = IxgbeTxQueue {
+            descriptors: Box::new(descriptors),
+            bufs_in_use: VecDeque::with_capacity(QS),
+            pool: None,
+            num_descriptors: QS,
+            clean_index: 0,
+            tx_index: 0,
+        };
+
+        self.tx_queues.push(tx_queue);
+
+        self.set_flags32(IGB_TXDCTL, IGB_TXDCTL_WTHRESH);
+
+        self.set_flags32(IGB_TCTL, IGB_TCTL_ENABLE);
+
+        Ok(())
+    }
+
+    fn igb_start_rx_queue(&mut self) -> IgbResult {
+        debug!("starting rx queue");
+
+        let queue = &mut self.rx_queues[0];
+
+        if queue.num_descriptors & (queue.num_descriptors - 1) != 0 {
+            // return Err("number of queue entries must be a power of 2".into());
+            return Err(IgbError::QueueNotAligned);
+        }
+
+        for i in 0..queue.num_descriptors {
+            let pool = &queue.pool;
+
+            let id = match pool.alloc_buf() {
+                Some(x) => x,
+                None => return Err(IgbError::NoMemory),
+            };
+
+            unsafe {
+                let desc = queue.descriptors[i].as_mut();
+                desc.set_packet_address(pool.get_phys_addr(id) as u64);
+                desc.reset_status();
+            }
+
+            // we need to remember which descriptor entry belongs to which mempool entry
+            queue.bufs_in_use.push(id);
+        }
+
+        let queue = &self.rx_queues[0];
+
+        // enable queue and wait if necessary
+        self.set_flags32(IGB_RXDCTL, IGB_RXDCTL_ENABLE);
         self.wait_set_reg32(IGB_RXDCTL, IGB_RXDCTL_ENABLE);
 
-        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
+        // rx queue starts out full
+        self.set_reg32(IGB_RDH, 0);
+
+        // was set to 0 before in the init function
+        self.set_reg32(IGB_RDT, (queue.num_descriptors - 1) as u32);
+
+        Ok(())
+    }
+
+    fn igb_start_tx_queue(&mut self) -> IgbResult {
+        debug!("starting tx queue");
+
+        let queue = &mut self.tx_queues[0];
+
+        if queue.num_descriptors & (queue.num_descriptors - 1) != 0 {
+            return Err(IgbError::QueueNotAligned);
+        }
+
+        // tx queue starts out empty
+        self.set_reg32(IGB_TDH, 0);
+        self.set_reg32(IGB_TDT, 0);
+
+        // enable queue and wait if necessary
+        self.set_flags32(IGB_TXDCTL, IGB_TXDCTL_ENABLE);
+        self.wait_set_reg32(IGB_TXDCTL, IGB_TXDCTL_ENABLE);
 
         Ok(())
     }
@@ -699,17 +800,13 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
         self.igb_init_rx(pool)?;
 
         // section 4.6.8 - init tx
-        self.init_tx()?;
+        self.igb_init_tx()?;
 
         log::info!("init rx:{} tx:{}", self.num_rx_queues, self.num_tx_queues);
 
-        for i in 0..self.num_rx_queues {
-            self.start_rx_queue(i)?;
-        }
+        self.igb_start_rx_queue()?;
 
-        for i in 0..self.num_tx_queues {
-            self.start_tx_queue(i)?;
-        }
+        self.igb_start_tx_queue()?;
 
         // enable promisc mode by default to make testing easier
         // self.set_promisc(true);
