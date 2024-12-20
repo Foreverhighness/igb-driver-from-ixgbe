@@ -278,6 +278,8 @@ impl<H: IgbHal, const QS: usize> NicDevice<H> for IgbDevice<H, QS> {
                 #[cfg(target_arch = "x86_64")]
                 packet.prefrtch(crate::memory::Prefetch::Time0);
 
+                debug!("[Igb::receive] receive packet {packet:02x?}");
+
                 let rx_buf = IgbNetBuf { packet };
 
                 // Call closure to avoid too many dynamic memory allocations, handle
@@ -297,7 +299,7 @@ impl<H: IgbHal, const QS: usize> NicDevice<H> for IgbDevice<H, QS> {
         }
 
         if rx_index != last_rx_index {
-            self.set_reg32(IXGBE_RDT(u32::from(queue_id)), last_rx_index as u32);
+            self.set_reg32(IGB_RDT, last_rx_index as u32);
             self.rx_queues[queue_id as usize].rx_index = rx_index;
         }
 
@@ -630,7 +632,14 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
 
         self.rx_queues.push(rx_queue);
 
-        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE);
+        self.set_flags32(
+            IGB_TXDCTL,
+            IGB_RXDCTL_PTHRESH | IGB_RXDCTL_HTHRESH | IGB_RXDCTL_WTHRESH,
+        );
+
+        self.set_reg32(IGB_SRRCTL, 0);
+
+        self.set_flags32(IGB_RCTL, IGB_RCTL_ENABLE | IGB_RCTL_SZ_1024);
 
         Ok(())
     }
@@ -1076,8 +1085,8 @@ impl<H: IgbHal, const QS: usize> IgbDevice<H, QS> {
     /// Disable all interrupts for all queues.
     fn disable_interrupts(&self) {
         // Clear interrupt mask to stop from interrupts being generated
-        self.set_reg32(IGB_EIMS, 0x0000_0000);
-        self.clear_interrupts();
+        self.set_reg32(IGB_IMS, !0);
+        // self.clear_interrupts();
     }
 
     /// Disable interrupt for queue with `queue_id`.

@@ -23,6 +23,7 @@ pub const IGB_MII_CR_RESTART_AUTO_NEGOTIATION: u32 = 1 << 9;
 
 pub const IGB_RCTL: u32 = 0x00100;
 pub const IGB_RCTL_ENABLE: u32 = 1 << 1;
+pub const IGB_RCTL_SZ_1024: u32 = 0x0001_0000;
 
 pub const IGB_RXDCTL: u32 = 0x0C028;
 pub const IGB_RXDCTL_ENABLE: u32 = 1 << 25;
